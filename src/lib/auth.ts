@@ -45,7 +45,39 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
       };
     }
 
-    // 2. Check session cookie
+    // 2. Check auth_token JWT cookie (primary TrueSendy authentication)
+    const authToken = cookieStore.get('auth_token')?.value;
+    if (authToken) {
+      try {
+        const { verifyToken } = require('@/utils/jwt.util');
+        const payload = verifyToken(authToken);
+        const userId = payload.userId || payload.id;
+        if (userId) {
+          const prisma = getPrisma();
+          const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+              systemRole: true,
+              isEmailVerified: true,
+            },
+          });
+          if (user) {
+            return {
+              ...user,
+              systemRole: user.systemRole as 'SUPERADMIN' | 'USER',
+            };
+          }
+        }
+      } catch {
+        // Invalid or expired token
+      }
+    }
+
+    // 3. Check legacy session cookies or user email
     const sessionToken = cookieStore.get('next-auth.session-token') || cookieStore.get('session');
     const userEmailCookie = cookieStore.get('user_email');
 

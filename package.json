@@ -13,7 +13,8 @@
     "worker:imap": "node src/workers/inboxMonitor.worker.js",
     "worker:system": "node src/workers/worker-system.js",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "create:admin": "node scripts/create-superadmin.js"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",
