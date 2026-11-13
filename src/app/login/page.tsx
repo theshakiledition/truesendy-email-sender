@@ -59,7 +59,7 @@ export default function LoginPage() {
             <ShieldCheck className="h-6 w-6 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">TrueSendy Console</h1>
-          <p className="text-xs text-purple-300/80 mt-1">Superadmin Authentication & Control Center</p>
+          <p className="text-xs text-purple-300/80 mt-1">Outreach Infrastructure & Customer Portal</p>
         </div>
 
         {/* Error Alert */}
@@ -74,7 +74,7 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
             <label className="block text-xs font-medium text-purple-200 mb-1.5">
-              Superadmin Email
+              Email Address
             </label>
             <div className="relative">
               <Mail className="absolute left-3.5 top-3 h-4 w-4 text-purple-400/70" />
@@ -118,7 +118,7 @@ export default function LoginPage() {
               </>
             ) : (
               <>
-                <span>Access Admin Panel</span>
+                <span>Sign In to Account</span>
                 <ArrowRight className="h-4 w-4" />
               </>
             )}
