@@ -23,6 +23,12 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`Server returned status ${res.status}: ${text.substring(0, 100)}`);
+      }
+
       const data = await res.json();
 
       if (!res.ok || !data.success) {

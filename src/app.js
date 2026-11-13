@@ -10,6 +10,7 @@ const trackingRoutes = require('./routes/tracking.routes');
 const adminProxyRoutes = require('./routes/adminProxy.routes');
 const bullBoardRoutes = require('./routes/bullBoard.routes');
 const impersonationRoutes = require('./routes/impersonation.routes');
+const authRoutes = require('./routes/auth.routes');
 const { preventImpersonatorDestruction } = require('./middleware/impersonationGuard');
 
 const app = express();
@@ -42,6 +43,7 @@ try {
 app.use(preventImpersonatorDestruction);
 
 // Routes
+app.use('/api/auth', authRoutes);
 app.use('/api/emails', emailRoutes);
 app.use('/api/unibox', uniboxRoutes);
 app.use('/api/tracking', trackingRoutes);
@@ -49,6 +51,14 @@ app.use('/api/admin/proxies', adminProxyRoutes);
 app.use('/api/admin/queues', bullBoardRoutes);
 app.use('/api/admin/impersonate', impersonationRoutes);
 app.use('/track', trackingRoutes);
+
+// Fallback JSON 404 handler for unknown /api routes (prevents HTML doctype errors)
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: `API endpoint '${req.method} ${req.originalUrl}' was not found.`,
+  });
+});
 
 // Global Error Handler
 app.use((err, req, res, next) => {
