@@ -1,6 +1,7 @@
 import React from 'react';
 import { Users, Building, ShieldCheck, Mail, Sparkles } from 'lucide-react';
 import { PrismaClient } from '@prisma/client';
+import ImpersonateUserButton from '@/components/admin/ImpersonateUserButton';
 
 let prismaClient: PrismaClient | null = null;
 function getPrisma(): PrismaClient {
@@ -59,13 +60,14 @@ export default async function AdminUsersPage() {
                 <th scope="col" className="px-6 py-3.5">Role</th>
                 <th scope="col" className="px-6 py-3.5">Subscription</th>
                 <th scope="col" className="px-6 py-3.5">Workspaces</th>
-                <th scope="col" className="px-6 py-3.5 text-right">Joined</th>
+                <th scope="col" className="px-6 py-3.5">Joined</th>
+                <th scope="col" className="px-6 py-3.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-purple-900/20">
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-purple-300/50">
+                  <td colSpan={6} className="px-6 py-12 text-center text-purple-300/50">
                     No users registered yet.
                   </td>
                 </tr>
@@ -87,8 +89,15 @@ export default async function AdminUsersPage() {
                     <td className="px-6 py-4 text-purple-300/80">
                       {u.memberships?.length || 0} organizations
                     </td>
-                    <td className="px-6 py-4 text-right text-purple-400/50 font-mono">
+                    <td className="px-6 py-4 text-purple-400/50 font-mono">
                       {new Date(u.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <ImpersonateUserButton
+                        userId={u.id}
+                        userEmail={u.email}
+                        isSuperAdmin={u.systemRole === 'SUPERADMIN'}
+                      />
                     </td>
                   </tr>
                 ))
