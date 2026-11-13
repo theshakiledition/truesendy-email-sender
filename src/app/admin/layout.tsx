@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getCurrentUser, isSuperAdmin } from '@/lib/auth';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 
@@ -22,9 +22,13 @@ export default async function AdminLayout({
   // 1. Resolve logged-in user
   const user = await getCurrentUser();
 
-  // 2. Strict Superadmin Security Check: If not SUPERADMIN, return 404 immediately
-  if (!user || !isSuperAdmin(user)) {
-    notFound();
+  // 2. Check authentication and Superadmin privileges
+  if (!user) {
+    redirect('/login');
+  }
+
+  if (!isSuperAdmin(user)) {
+    redirect('/campaigns/new');
   }
 
   // 3. Render Dark Mode Plum Layout

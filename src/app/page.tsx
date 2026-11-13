@@ -1,6 +1,16 @@
 import { redirect } from 'next/navigation';
+import { getCurrentUser, isSuperAdmin } from '@/lib/auth';
 
-export default function RootPage() {
-  // Automatically redirect root visitors to the admin control panel
-  redirect('/admin');
+export default async function RootPage() {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    redirect('/login');
+  }
+
+  if (isSuperAdmin(user)) {
+    redirect('/admin');
+  }
+
+  redirect('/campaigns/new');
 }

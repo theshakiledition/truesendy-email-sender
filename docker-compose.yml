@@ -46,9 +46,14 @@ services:
       NODE_ENV: production
       PORT: 3000
       NEXT_PUBLIC_API_URL: /api
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-truesendy}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
     networks:
       - truesendy-net
     depends_on:
+      postgres:
+        condition: service_healthy
       api:
         condition: service_started
 
