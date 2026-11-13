@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Users,
@@ -32,6 +32,15 @@ const navItems: NavItem[] = [
 
 export default function AdminSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    router.push('/login');
+    router.refresh();
+  };
 
   return (
     <aside className="w-64 shrink-0 min-h-screen bg-[#11071c] border-r border-purple-900/30 flex flex-col justify-between select-none relative z-20">
@@ -137,8 +146,9 @@ export default function AdminSidebar() {
           </div>
 
           <button
+            onClick={handleLogout}
             title="Sign out"
-            className="p-1.5 text-purple-400 hover:text-white rounded-lg hover:bg-purple-950/60 transition"
+            className="p-1.5 text-purple-400 hover:text-white rounded-lg hover:bg-purple-950/60 transition cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
           </button>
