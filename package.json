@@ -1,0 +1,46 @@
+{
+  "name": "truesendy-email-engine",
+  "version": "1.0.0",
+  "description": "Pure cold email outreach engine and sender infrastructure",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "build": "next build",
+    "next:dev": "next dev",
+    "next:start": "next start",
+    "worker:sender": "node src/workers/emailSender.worker.js",
+    "worker:imap": "node src/workers/inboxMonitor.worker.js",
+    "worker:system": "node src/workers/worker-system.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.14.0",
+    "@bull-board/api": "^5.15.3",
+    "@bull-board/express": "^5.15.3",
+    "@bull-board/ui": "^5.15.3",
+    "bullmq": "^5.7.12",
+    "clsx": "^2.1.1",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "https-proxy-agent": "^7.0.4",
+    "imapflow": "^1.0.162",
+    "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.378.0",
+    "mailparser": "^3.7.1",
+    "next": "^14.2.3",
+    "nodemailer": "^6.9.13",
+    "openai": "^4.47.1",
+    "proxy-agent": "^6.4.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.3.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0",
+    "prisma": "^5.14.0"
+  }
+}

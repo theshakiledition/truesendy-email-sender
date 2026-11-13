@@ -1,0 +1,540 @@
+// ==============================================================================
+// PRISMA SCHEMA: Pure Cold Email Outreach SaaS (No Warmup Features)
+// Stack: Node.js, Prisma ORM, PostgreSQL
+// ==============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------------------------
+// ENUMS
+// ------------------------------------------------------------------------------
+
+enum SubscriptionTier {
+  FREE
+  STARTER
+  GROWTH
+  PRO
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+enum SystemRole {
+  USER
+  SUPERADMIN
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum EmailProvider {
+  GOOGLE
+  MICROSOFT
+  SMTP_IMAP
+  CUSTOM
+}
+
+enum ConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  AUTH_FAILED
+  RATE_LIMITED
+  NEEDS_REAUTH
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum LeadStatus {
+  UNTOUCHED
+  CONTACTED
+  OPENED
+  CLICKED
+  REPLIED
+  BOUNCED
+  UNSUBSCRIBED
+}
+
+enum LeadAiTag {
+  INTERESTED
+  NOT_INTERESTED
+  MEETING_BOOKED
+  OUT_OF_OFFICE
+  DO_NOT_CONTACT
+}
+
+enum EmailEventType {
+  SENT
+  OPENED
+  CLICKED
+  REPLIED
+  BOUNCED
+  UNSUBSCRIBED
+}
+
+enum TrackingDomainStatus {
+  PENDING
+  VERIFIED
+  FAILED
+}
+
+// ------------------------------------------------------------------------------
+// 1. USER & AUTHENTICATION
+// ------------------------------------------------------------------------------
+
+model User {
+  id                 String             @id @default(uuid()) @db.Uuid
+  email              String             @unique @db.VarChar(255)
+  passwordHash       String?            @db.VarChar(255)
+  firstName          String?            @db.VarChar(100)
+  lastName           String?            @db.VarChar(100)
+  avatarUrl          String?            @db.Text
+  isEmailVerified    Boolean            @default(false)
+  systemRole         SystemRole         @default(USER)
+
+  // Billing & Tier
+  subscriptionTier   SubscriptionTier   @default(FREE)
+  subscriptionStatus SubscriptionStatus @default(TRIALING)
+  stripeCustomerId   String?            @unique @db.VarChar(255)
+  stripeSubId        String?            @unique @db.VarChar(255)
+  trialEndsAt        DateTime?
+  subscriptionEndsAt DateTime?
+
+  // Multi-tenant membership relations
+  memberships        WorkspaceMember[]
+
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([email])
+  @@map("users")
+}
+
+// ------------------------------------------------------------------------------
+// 2. WORKSPACE (Multi-Tenant Boundary)
+// ------------------------------------------------------------------------------
+
+model Workspace {
+  id               String            @id @default(uuid()) @db.Uuid
+  name             String            @db.VarChar(150)
+  slug             String            @unique @db.VarChar(150)
+
+  // Relations
+  members          WorkspaceMember[]
+  connectedEmails  ConnectedEmail[]
+  campaigns        Campaign[]
+  leads            Lead[]
+  trackingDomains  TrackingDomain[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([slug])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(uuid()) @db.Uuid
+  role        WorkspaceRole @default(MEMBER)
+
+  userId      String        @db.Uuid
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  workspaceId String        @db.Uuid
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+  @@index([userId])
+  @@map("workspace_members")
+}
+
+// ------------------------------------------------------------------------------
+// 3. CONNECTED EMAIL (Outreach Senders - Pure Cold Outreach, No Warmup)
+// ------------------------------------------------------------------------------
+
+model ConnectedEmail {
+  id                    String                   @id @default(uuid()) @db.Uuid
+  workspaceId           String                   @db.Uuid
+  workspace             Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  // Identity & Provider
+  email                 String                   @db.VarChar(255)
+  fromName              String                   @db.VarChar(150)
+  replyTo               String?                  @db.VarChar(255)
+  provider              EmailProvider            @default(SMTP_IMAP)
+  connectionStatus      ConnectionStatus         @default(CONNECTED)
+
+  // Encrypted Credentials (AES-256-GCM ciphertexts)
+  encryptedSmtpHost     String?                  @db.Text
+  smtpPort              Int?
+  encryptedSmtpUser     String?                  @db.Text
+  encryptedSmtpPass     String?                  @db.Text
+  smtpSecure            Boolean                  @default(true) // SSL/TLS
+
+  encryptedImapHost     String?                  @db.Text
+  imapPort              Int?
+  encryptedImapUser     String?                  @db.Text
+  encryptedImapPass     String?                  @db.Text
+  imapSecure            Boolean                  @default(true) // SSL/TLS
+
+  // OAuth2 Token Cache (Google / Microsoft 365)
+  encryptedAccessToken  String?                  @db.Text
+  encryptedRefreshToken String?                  @db.Text
+  tokenExpiresAt        DateTime?
+
+  // Sending Rate Limits & Throttling
+  dailyLimit            Int                      @default(50)  // Strict per-inbox daily cap
+  todaySentCount        Int                      @default(0)   // Resets every midnight
+  lastSentAt            DateTime?
+  minWaitSeconds        Int                      @default(120) // Random jitter/wait between sends
+
+  // Health & Diagnostics
+  reputationScore       Int                      @default(100) // 0-100 scale
+  lastCheckedAt         DateTime?
+  lastErrorReason       String?                  @db.Text
+
+  // Multi-inbox rotation & log tracking
+  campaignLinks         CampaignSendingAccount[]
+  emailActivities       EmailActivityLog[]
+
+  // Dedicated outbound proxy for IP pool isolation
+  proxyId               String?                  @db.Uuid
+  proxy                 Proxy?                   @relation(fields: [proxyId], references: [id], onDelete: SetNull)
+
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId, connectionStatus])
+  @@index([proxyId])
+  @@map("connected_emails")
+}
+
+// ------------------------------------------------------------------------------
+// 4. CAMPAIGN (Outreach Settings, Schedules & Tracking)
+// ------------------------------------------------------------------------------
+
+model Campaign {
+  id                     String                   @id @default(uuid()) @db.Uuid
+  workspaceId            String                   @db.Uuid
+  workspace              Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name                   String                   @db.VarChar(200)
+  status                 CampaignStatus           @default(DRAFT)
+
+  // Sending Schedules & Timezone
+  timezone               String                   @default("UTC") @db.VarChar(50) // e.g., "America/New_York"
+  sendDays               Int[]                    @default([1, 2, 3, 4, 5])       // 1 = Mon, 7 = Sun
+  dailyStartTime         String                   @default("09:00") @db.VarChar(5) // HH:mm format
+  dailyEndTime           String                   @default("17:00") @db.VarChar(5) // HH:mm format
+  dailyLimit             Int                      @default(200)                    // Max leads to contact per day
+  minTimeBetweenEmails   Int                      @default(60)                     // Base jitter between sends (sec)
+
+  // Tracking & Domain Deliverability
+  trackingDomain         String?                  @db.VarChar(255)
+  trackingDomainId       String?                  @db.Uuid
+  customDomain           TrackingDomain?          @relation(fields: [trackingDomainId], references: [id], onDelete: SetNull)
+  trackOpens             Boolean                  @default(true)
+  trackClicks            Boolean                  @default(false)
+  stopOnReply            Boolean                  @default(true)
+  stopOnAutoReply        Boolean                  @default(false)
+  sendAsPlaintext        Boolean                  @default(false)
+
+  // Relations
+  sendingAccounts        CampaignSendingAccount[]
+  sequences              CampaignSequence[]
+  leads                  Lead[]
+  analytics              EmailAnalytics?
+  activityLogs           EmailActivityLog[]
+
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  @@index([workspaceId, status])
+  @@map("campaigns")
+}
+
+// Junction table: Multi-inbox rotation pool per campaign (Round-robin dispatch)
+model CampaignSendingAccount {
+  id                String         @id @default(uuid()) @db.Uuid
+  campaignId        String         @db.Uuid
+  campaign          Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  connectedEmailId  String         @db.Uuid
+  connectedEmail    ConnectedEmail @relation(fields: [connectedEmailId], references: [id], onDelete: Cascade)
+
+  assignedDailyCap  Int?           // Optional custom override per inbox in this campaign
+  sentCount         Int            @default(0)
+
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@unique([campaignId, connectedEmailId])
+  @@index([campaignId])
+  @@index([connectedEmailId])
+  @@map("campaign_sending_accounts")
+}
+
+// ------------------------------------------------------------------------------
+// 5. CAMPAIGN SEQUENCE (Drip Steps & Spintax Templates)
+// ------------------------------------------------------------------------------
+
+model CampaignSequence {
+  id              String             @id @default(uuid()) @db.Uuid
+  campaignId      String             @db.Uuid
+  campaign        Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  stepNumber      Int                // Sequence order: 1, 2, 3...
+  delayDays       Int                @default(2) // Wait X days after previous step
+  delayHours      Int                @default(0) // Wait X hours
+
+  // Email Copy with Spintax & Variable Tokens
+  // Supports: {{firstName}}, {{companyName}}, and {Hello|Hi|Hey} spintax syntax
+  subject         String             @db.VarChar(500)
+  body            String             @db.Text
+
+  // Multi-variant A/B Testing support per step (e.g. Variant A, B, C)
+  variantLabel    String             @default("A") @db.VarChar(5)
+  weight          Int                @default(100) // Percentage distribution for A/B testing
+
+  // Threading control
+  threadReply     Boolean            @default(true) // Send in same thread as previous step
+
+  // Relations
+  activityLogs    EmailActivityLog[]
+
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([campaignId, stepNumber, variantLabel])
+  @@index([campaignId, stepNumber])
+  @@map("campaign_sequences")
+}
+
+// ------------------------------------------------------------------------------
+// 6. LEAD (Contact Data, Custom Variables & Delivery State)
+// ------------------------------------------------------------------------------
+
+model Lead {
+  id                   String             @id @default(uuid()) @db.Uuid
+  workspaceId          String             @db.Uuid
+  workspace            Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  campaignId           String?            @db.Uuid
+  campaign             Campaign?          @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  // Contact Info
+  email                String             @db.VarChar(255)
+  firstName            String?            @db.VarChar(100)
+  lastName             String?            @db.VarChar(100)
+  companyName          String?            @db.VarChar(150)
+  jobTitle             String?            @db.VarChar(150)
+  phone                String?            @db.VarChar(50)
+  website              String?            @db.VarChar(255)
+  linkedinUrl          String?            @db.VarChar(255)
+
+  // Extensible Custom Attributes (e.g., {{icebreaker}}, {{painPoint}}, {{customP1}})
+  customVariables      Json               @default("{}") @db.JsonB
+
+  // Outreach Lifecycle State
+  status               LeadStatus         @default(UNTOUCHED)
+  aiTag                LeadAiTag?
+  aiReason             String?            @db.Text
+  isDoNotContact       Boolean            @default(false)
+  currentSequenceStep  Int                @default(1)
+  hasReplied           Boolean            @default(false)
+  hasBounced           Boolean            @default(false)
+  hasUnsubscribed      Boolean            @default(false)
+
+  // Scheduling Queue Timestamps
+  nextContactAt        DateTime?          // Scheduled execution timestamp for the queue worker
+  lastContactedAt      DateTime?
+  lastOpenedAt         DateTime?
+  lastClickedAt        DateTime?
+  lastRepliedAt        DateTime?
+
+  // Relations
+  activityLogs         EmailActivityLog[]
+
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  // Crucial performance indexes for cold email dispatchers & filtering
+  @@unique([workspaceId, email, campaignId])
+  @@index([workspaceId, email])
+  @@index([workspaceId, isDoNotContact])
+  @@index([campaignId, status])
+  @@index([campaignId, status, nextContactAt])
+  @@index([status, nextContactAt])
+  @@index([customVariables], type: Gin)
+  @@map("leads")
+}
+
+// ------------------------------------------------------------------------------
+// 7. EMAIL ANALYTICS (Aggregated Counts & Metrics)
+// ------------------------------------------------------------------------------
+
+model EmailAnalytics {
+  id                 String    @id @default(uuid()) @db.Uuid
+  campaignId         String    @unique @db.Uuid
+  campaign           Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  totalLeads         Int       @default(0)
+  sentCount          Int       @default(0)
+  deliveredCount     Int       @default(0)
+  openedCount        Int       @default(0)
+  uniqueOpenedCount  Int       @default(0)
+  clickedCount       Int       @default(0)
+  uniqueClickedCount Int       @default(0)
+  repliedCount       Int       @default(0)
+  bouncedCount       Int       @default(0)
+  unsubscribedCount  Int       @default(0)
+
+  // Precision rates stored as decimals (e.g. 0.4520 = 45.20%)
+  openRate           Decimal   @default(0.00) @db.Decimal(5, 4)
+  clickRate          Decimal   @default(0.00) @db.Decimal(5, 4)
+  replyRate          Decimal   @default(0.00) @db.Decimal(5, 4)
+  bounceRate         Decimal   @default(0.00) @db.Decimal(5, 4)
+
+  updatedAt          DateTime  @updatedAt
+
+  @@map("email_analytics")
+}
+
+// ------------------------------------------------------------------------------
+// 8. EMAIL ACTIVITY LOG (Detailed Audit Trail & Tracking Events)
+// ------------------------------------------------------------------------------
+
+model EmailActivityLog {
+  id                String            @id @default(uuid()) @db.Uuid
+  eventType         EmailEventType
+
+  campaignId        String            @db.Uuid
+  campaign          Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  leadId            String            @db.Uuid
+  lead              Lead              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  sequenceId        String?           @db.Uuid
+  sequence          CampaignSequence? @relation(fields: [sequenceId], references: [id], onDelete: SetNull)
+
+  connectedEmailId  String?           @db.Uuid
+  connectedEmail    ConnectedEmail?   @relation(fields: [connectedEmailId], references: [id], onDelete: SetNull)
+
+  // Tracking Metadata
+  messageId         String?           @db.VarChar(255) // RFC 2822 Message-ID
+  ipAddress         String?           @db.VarChar(45)
+  userAgent         String?           @db.Text
+  clickedUrl        String?           @db.Text
+  bounceReason      String?           @db.Text
+  replySnippet      String?           @db.Text
+
+  timestamp         DateTime          @default(now())
+
+  @@index([campaignId, eventType])
+  @@index([leadId])
+  @@index([connectedEmailId])
+  @@index([messageId])
+  @@index([timestamp])
+  @@map("email_activity_logs")
+}
+
+// ------------------------------------------------------------------------------
+// 9. TRACKING DOMAIN (Custom Whitelabel CNAME Deliverability)
+// ------------------------------------------------------------------------------
+
+model TrackingDomain {
+  id              String               @id @default(uuid()) @db.Uuid
+  workspaceId     String               @db.Uuid
+  workspace       Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  domain          String               @unique @db.VarChar(255) // e.g. "track.user.com"
+  cnameTarget     String               @default("track.truesendy.com") @db.VarChar(255)
+  status          TrackingDomainStatus @default(PENDING)
+  isDefault       Boolean              @default(false)
+  sslActive       Boolean              @default(false)
+  lastVerifiedAt  DateTime?
+  lastErrorReason String?              @db.Text
+
+  campaigns       Campaign[]
+
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([workspaceId, status])
+  @@map("tracking_domains")
+}
+
+// ------------------------------------------------------------------------------
+// 10. PROXY (Webshare Outbound Rotating & Dedicated IP Pool)
+// ------------------------------------------------------------------------------
+
+model Proxy {
+  id              String           @id @default(uuid()) @db.Uuid
+  host            String           @db.VarChar(255)
+  port            String           @db.VarChar(20)
+  username        String?          @db.VarChar(255)
+  password        String?          @db.VarChar(255)
+  protocol        String           @default("HTTP") @db.VarChar(20)
+  isActive        Boolean          @default(true)
+
+  connectedEmails ConnectedEmail[]
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@unique([host, port])
+  @@index([isActive])
+  @@map("proxies")
+}
+
+// ------------------------------------------------------------------------------
+// 11. AUDIT LOG (Security & Impersonation Audit Trail)
+// ------------------------------------------------------------------------------
+
+model AuditLog {
+  id              String   @id @default(uuid()) @db.Uuid
+  actorId         String   @db.Uuid // Attributed to impersonatorId if impersonating, else userId
+  impersonatorId  String?  @db.Uuid // Explicit reference if performed during impersonation
+  targetUserId    String?  @db.Uuid // The customer account that was being viewed/acted upon
+  action          String   @db.VarChar(100) // e.g. "CAMPAIGN_UPDATE", "CONNECT_EMAIL"
+  entityType      String   @db.VarChar(100)
+  entityId        String?  @db.VarChar(255)
+  details         Json     @default("{}") @db.JsonB
+  ipAddress       String?  @db.VarChar(45)
+  userAgent       String?  @db.Text
+  createdAt       DateTime @default(now())
+
+  @@index([actorId])
+  @@index([impersonatorId])
+  @@index([targetUserId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

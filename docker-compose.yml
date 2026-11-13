@@ -1,0 +1,215 @@
+version: '3.8'
+
+# ==============================================================================
+# Production Docker Compose Architecture: Cold Email SaaS (TrueSendy)
+# Services:
+#   - postgres: Relational database with persistent volume & health checks
+#   - redis: In-memory store for BullMQ sending queues & rate throttlers
+#   - api: Node.js Express backend API (Port 5000)
+#   - worker-sender: BullMQ send loop worker with inbox rotation & jitter
+#   - worker-imap: Continuous daemon monitoring replies, bounces, & warmup
+#   - web: Next.js App Router frontend (Port 3000)
+#   - nginx: Reverse proxy gateway routing web & api traffic
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. NGINX REVERSE PROXY
+  # ----------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: truesendy_nginx
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    networks:
+      - truesendy-net
+    depends_on:
+      - web
+      - api
+
+  # ----------------------------------------------------------------------------
+  # 2. NEXT.JS WEB FRONTEND
+  # ----------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: truesendy_web
+    restart: unless-stopped
+    expose:
+      - '3000'
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NEXT_PUBLIC_API_URL: /api
+    networks:
+      - truesendy-net
+    depends_on:
+      api:
+        condition: service_started
+
+  # ----------------------------------------------------------------------------
+  # 3. NODE.JS / EXPRESS BACKEND API
+  # ----------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: truesendy_api
+    restart: unless-stopped
+    command: node src/server.js
+    expose:
+      - '5000'
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-truesendy}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      TRACKING_SECRET: ${TRACKING_SECRET:-truesendy-production-secret}
+      TRACKING_CNAME_TARGET: ${TRACKING_CNAME_TARGET:-track.truesendy.com}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    networks:
+      - truesendy-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ----------------------------------------------------------------------------
+  # 4. WORKER: BullMQ Email Dispatch Loop (Inbox Rotation & Jitter Pacing)
+  # ----------------------------------------------------------------------------
+  worker-sender:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: truesendy_worker_sender
+    restart: unless-stopped
+    command: node src/workers/emailSender.worker.js
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-truesendy}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      TRACKING_SECRET: ${TRACKING_SECRET:-truesendy-production-secret}
+      TRACKING_CNAME_TARGET: ${TRACKING_CNAME_TARGET:-track.truesendy.com}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    networks:
+      - truesendy-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ----------------------------------------------------------------------------
+  # 5. WORKER: IMAP Listener Daemon (Replies, DSN Bounces, & Warmup Rescues)
+  # ----------------------------------------------------------------------------
+  worker-imap:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: truesendy_worker_imap
+    restart: unless-stopped
+    command: node src/workers/inboxMonitor.worker.js
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-truesendy}?schema=public
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      INBOX_MONITOR_INTERVAL_MS: ${INBOX_MONITOR_INTERVAL_MS:-60000}
+      EMERGENCY_BRAKE_MIN_SENT: 50
+      EMERGENCY_BRAKE_MAX_BOUNCE_RATE: 0.08
+    networks:
+      - truesendy-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ----------------------------------------------------------------------------
+  # 6. WORKER: System Maintenance Daemon (Webshare Proxy Sync & Scheduled Crons)
+  # ----------------------------------------------------------------------------
+  worker-system:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: truesendy_worker_system
+    restart: unless-stopped
+    command: node src/workers/worker-system.js
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-truesendy}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      WEBSHARE_DOWNLOAD_URL: ${WEBSHARE_DOWNLOAD_URL}
+    networks:
+      - truesendy-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ----------------------------------------------------------------------------
+  # 7. POSTGRESQL DATABASE
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: truesendy_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-truesendy}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - truesendy-net
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres}']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # 7. REDIS (BullMQ Queues & Atomic Throttlers)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: truesendy_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - truesendy-net
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+# ------------------------------------------------------------------------------
+# NETWORKS & VOLUMES
+# ------------------------------------------------------------------------------
+networks:
+  truesendy-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

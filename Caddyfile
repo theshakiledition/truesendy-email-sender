@@ -1,0 +1,55 @@
+# ==============================================================================
+# Caddyfile: Automated On-Demand TLS for Custom Whitelabel Tracking Domains
+# ==============================================================================
+
+{
+    # Global On-Demand TLS configuration
+    on_demand_tls {
+        # Security: Caddy queries this endpoint before issuing or renewing any TLS certificate.
+        # Only domains returning HTTP 200 OK are granted Let's Encrypt certificates.
+        # This completely stops malicious actors from pointing arbitrary domains to your IP.
+        ask http://api:3000/api/tracking/check-domain
+
+        # Rate-limiting guardrail for certificate issuance:
+        # Allows up to 5 certificate issuances every 2 minutes.
+        interval 2m
+        burst 5
+    }
+
+    # Optional ACME account email for expiration alerts
+    email admin@truesendy.com
+
+    # Disable administrative API exposed externally
+    admin off
+}
+
+# Catch-all HTTPS block for all customer custom domains and primary domain
+:443 {
+    tls {
+        on_demand
+    }
+
+    # Proxy to Node.js backend container
+    reverse_proxy api:3000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # High-performance compression
+    encode gzip zstd
+
+    # Security Headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}
