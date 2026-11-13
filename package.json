@@ -4,11 +4,11 @@
   "description": "Pure cold email outreach engine and sender infrastructure",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
-    "build": "next build",
-    "next:dev": "next dev",
-    "next:start": "next start",
+    "start": "next start -p 3000",
+    "start:api": "node src/server.js",
+    "dev": "next dev",
+    "dev:api": "nodemon src/server.js",
+    "build": "prisma generate && next build",
     "worker:sender": "node src/workers/emailSender.worker.js",
     "worker:imap": "node src/workers/inboxMonitor.worker.js",
     "worker:system": "node src/workers/worker-system.js",
@@ -40,7 +40,14 @@
     "tailwind-merge": "^2.3.0"
   },
   "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@types/react": "^18.3.2",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.19",
     "nodemon": "^3.1.0",
-    "prisma": "^5.14.0"
+    "postcss": "^8.4.38",
+    "prisma": "^5.14.0",
+    "tailwindcss": "^3.4.3",
+    "typescript": "^5.4.5"
   }
 }
