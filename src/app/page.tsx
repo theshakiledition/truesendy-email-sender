@@ -12,5 +12,5 @@ export default async function RootPage() {
     redirect('/admin');
   }
 
-  redirect('/campaigns/new');
+  redirect('/campaigns');
 }
